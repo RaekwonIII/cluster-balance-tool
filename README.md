@@ -1,93 +1,97 @@
 # Cluster Balance Tool
 
-## Run the tool 
+React app for checking SSV cluster balances and runway on:
+- Ethereum mainnet
+- Hoodi
 
-In the project directory, you can run:
-``` bash
-npm i
+The app supports mixed accounts containing both:
+- ETH-paying clusters
+- legacy SSV-paying clusters
+
+## Development
+
+Install dependencies and start the app:
+
+```bash
+npm install
 npm start
 ```
 
-## Code walkthrough 
+Create a production build:
 
-We start by defining the Subgraph URL, this is where we will send the request to.
-
-```javascript
-const holesky_url = "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest";
+```bash
+npm run build
 ```
 
-Then we define the query we want to send to get data on a certain account, we take in the input from what address the user enters and pass it into the query.
+## How It Works
 
-This query will give us the operator IDs of all active clusters for this account.
+The app queries the SSV subgraph for:
+- active clusters owned by an account
+- DAO fee parameters
+- operator fee data
 
-```javascript
-const clusterQuery = `{
-    account(id: "${accountAddress.toLocaleLowerCase()}") {
-        clusters(where: {active: true}) {
-        operatorIds
-        }
-    }
-}`;
+It then computes cluster balance and runway locally.
+
+Important details:
+- ETH clusters use `effectiveBalance / 32` semantics for billing
+- legacy SSV clusters use `validatorCount`
+- calculations use `BigInt`
+- contract validation is done against `SSVNetworkViews` on mainnet
+
+The shared calculation logic lives in:
+
+```text
+src/clusterBalanceShared.mjs
 ```
 
-Next we send the request using fetch, and save each operator ID array for each cluster to another array.
+The UI component is:
 
-```javascript
-let query = clusterQuery;
-const cluster_response = await fetch(url, {
-    method: 'POST',
-    headers: {
-        'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query })
-});
-
-const clusterData = await cluster_response.json();
-const operatorIdArray = clusterData.data.account.clusters.map(cluster => cluster.operatorIds);
+```text
+src/SSVClusterBalanceFetcher.js
 ```
 
-For this next step we need to get a lot of data to correctly compute the [Cluster Balance](https://docs.ssv.network/learn/stakers/clusters/cluster-balance). 
+## Validation Script
 
-For each cluster, we get the operator IDs, and the cluster ID, then build a query using these values. 
+The repository includes a regression-check script that compares the app's calculations with `SSVNetworkViews`:
 
-``` javascript 
-for (const operatorIdList of operatorIdArray) {
-        const operatorIds = operatorIdList.map(x => x.toString())
-        const clusterId = `${accountAddress.toLocaleLowerCase()}-${operatorIds.join("-")}`
-
-        const query = `{
-          _meta {
-            block {
-              number
-            }
-          }
-          daovalues(id: "${daoAddress}") {
-            networkFee
-            networkFeeIndex
-            networkFeeIndexBlockNumber
-            liquidationThreshold
-            minimumLiquidationCollateral
-          }
-          operators(where: {id_in: ["${operatorIds.join('", "')}"]}) {
-            fee
-            feeIndex
-            feeIndexBlockNumber
-          }
-          cluster(id: "${clusterId}") {
-            validatorCount
-            networkFeeIndex
-            index
-            balance
-          }
-        }`;
-
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ query })
-    });
+```bash
+npm run validate:balances
 ```
 
-The rest of the code contained within the for loop is the programmatic version of the [Cluster Balance Formula](https://docs.ssv.network/learn/stakers/clusters/cluster-balance#cluster-balance-formula) which can be reused.
+This script:
+- fetches sample owner clusters from the subgraph
+- pins contract calls to the subgraph `_meta.block.number`
+- compares `assetType`, `balance`, and `burnRate`
+- writes a Markdown report to `reports/balance-validation-report.md`
+
+If any mismatch is found, the script exits with a non-zero status.
+
+### Strict Mode
+
+You can also fail on runtime row errors, not just mismatches:
+
+```bash
+npm run validate:balances -- --strict
+```
+
+Use this when you want the script to behave like a stronger regression gate.
+
+### RPC Override
+
+By default the script uses:
+
+```text
+https://ethereum-rpc.publicnode.com
+```
+
+You can override it with:
+
+```bash
+ETH_RPC_URL=https://your-rpc.example npm run validate:balances
+```
+
+## Generated Reports
+
+Validation reports are written to `reports/` for local inspection.
+
+That directory is intentionally gitignored because report contents change with live chain state and should not create repository churn.

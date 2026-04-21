@@ -1,9 +1,6 @@
 import React, { useState } from 'react';
 import { Switch } from "@headlessui/react";
-
-const secondsPerDay = 86400
-const avgBlockTime = 12
-const blocksPerDay = secondsPerDay / avgBlockTime
+import { fetchClusterBalances, formatRunwayDays } from './clusterBalanceShared.mjs';
 
 const SSVClusterBalanceFetcher = () => {
   const [clusterArray, setClusterArray] = useState([]);
@@ -12,127 +9,27 @@ const SSVClusterBalanceFetcher = () => {
   const [testnet, setTestnet] = useState(false)
   const [error, setError] = useState(null);
 
-  const holesky_url = "https://api.studio.thegraph.com/query/71118/ssv-network-holesky/version/latest";
-  const mainnet_url = "https://api.studio.thegraph.com/query/53804/ssv-mainnet/version/latest"
-
   const fetchData = async (accountAddress) => {
+    if (!accountAddress.trim()) {
+      setClusterArray([])
+      setTableFull(false)
+      setLoading(false)
+      setError(null)
+      return
+    }
+
     setClusterArray([])
     setTableFull(false)
     setLoading(true);
     setError(null);
 
-
-    const clusterQuery = `{
-        account(id: "${accountAddress.toLocaleLowerCase()}") {
-          clusters(where: {active: true}) {
-            operatorIds
-          }
-        }
-      }`;
-
-    let url
-    let daoAddress
-    if (testnet) {
-      url = holesky_url
-      daoAddress = "0x38A4794cCEd47d3baf7370CcC43B560D3a1beEFA"
-    } else {
-      url = mainnet_url
-      daoAddress = "0xdd9bc35ae942ef0cfa76930954a156b3ff30a4e1"
-    }
-
-    setClusterArray([])
-    setTableFull(false)
     try {
-
-      let query = clusterQuery;
-      const cluster_response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query })
-      });
-
-      const clusterData = await cluster_response.json();
-
-      const operatorIdArray = clusterData.data.account.clusters.map(cluster => cluster.operatorIds);
-
-
-      for (const operatorIdList of operatorIdArray) {
-        const operatorIds = operatorIdList.map(x => x.toString())
-        const clusterId = `${accountAddress.toLocaleLowerCase()}-${operatorIds.join("-")}`
-
-        const query = `{
-          _meta {
-            block {
-              number
-            }
-          }
-          daovalues(id: "${daoAddress}") {
-            networkFee
-            networkFeeIndex
-            networkFeeIndexBlockNumber
-            liquidationThreshold
-            minimumLiquidationCollateral
-          }
-          operators(where: {id_in: ["${operatorIds.join('", "')}"]}) {
-            fee
-            feeIndex
-            feeIndexBlockNumber
-          }
-          cluster(id: "${clusterId}") {
-            validatorCount
-            networkFeeIndex
-            index
-            balance
-          }
-        }`;
-
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ query })
-        });
-
-        const responseData = await response.json();
-        const cumulativeNetworkFee = parseInt(responseData.data.daovalues.networkFeeIndex) + (responseData.data._meta.block.number - parseInt(responseData.data.daovalues.networkFeeIndexBlockNumber)) * parseInt(responseData.data.daovalues.networkFee) - (responseData.data.cluster.networkFeeIndex * 10000000);
-        let cumulativeOperatorFee = -responseData.data.cluster.index * 10000000;
-
-        for (let operator of responseData.data.operators) {
-          cumulativeOperatorFee += parseInt(operator.feeIndex) + (responseData.data._meta.block.number - parseInt(operator.feeIndexBlockNumber)) * parseInt(operator.fee)
-        }
-
-        const opFee = responseData.data.operators.reduce(
-          (accumulator, currentValue) => accumulator + parseInt(currentValue.fee),
-          0,
-        )
-
-        // Calculate cluster balance
-        let currentClusterArray = clusterArray
-        let calculatedClusterBalance
-        if (responseData.data.cluster.validatorCount > 0) {
-          calculatedClusterBalance = responseData.data.cluster.balance - (cumulativeNetworkFee + cumulativeOperatorFee) * responseData.data.cluster.validatorCount;
-        } else {
-          calculatedClusterBalance = responseData.data.cluster.balance - (cumulativeNetworkFee + cumulativeOperatorFee)
-        }
-
-        // Calculate runway 
-        const burnRate = (opFee + parseInt(responseData.data.daovalues.networkFee)) * responseData.data.cluster.validatorCount
-        const mLc = responseData.data.daovalues.minimumLiquidationCollateral
-        const LC = Math.max(mLc, (burnRate * responseData.data.daovalues.liquidationThreshold));
-        let runwaySSV = calculatedClusterBalance - LC
-        const operationalRunway = runwaySSV / burnRate
-
-        const currentCluster = [operatorIds.join(","), (calculatedClusterBalance / 1000000000000000000).toFixed(3), operationalRunway.toFixed(0)]
-        currentClusterArray.push(currentCluster)
-        setClusterArray(currentClusterArray)
-      }
+      const { rows } = await fetchClusterBalances({ accountAddress, testnet })
+      setClusterArray(rows)
       setTableFull(true)
-    } catch (error) {
-      console.error("Error fetching data:", error);
-      setError("An error occurred while fetching data.");
+    } catch (fetchError) {
+      console.error("Error fetching data:", fetchError);
+      setError(fetchError instanceof Error ? fetchError.message : "An error occurred while fetching data.");
     } finally {
       setLoading(false);
     }
@@ -141,7 +38,7 @@ const SSVClusterBalanceFetcher = () => {
   return (
     <div>
       <div className="fixed top-3 right-5">
-        <a href="https://github.com/taylorferran/cluster-balance-tool" target="_blank">
+        <a href="https://github.com/taylorferran/cluster-balance-tool" target="_blank" rel="noreferrer">
           <img
             src="github-mark-white.svg"
             alt="GitHub Logo"
@@ -171,7 +68,7 @@ const SSVClusterBalanceFetcher = () => {
             pointer-events-none inline-block h-[17px] w-[17px] transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out`}
               />
             </Switch>
-            <span className="text-white font-medium ml-4">Holesky</span>
+            <span className="text-white font-medium ml-4">Hoodi</span>
           </div>
 
           <div className="flex justify-center mb-4">
@@ -198,13 +95,14 @@ const SSVClusterBalanceFetcher = () => {
                   <thead>
                     <tr className="bg-[#0E0E52] text-white">
                       <th className="px-4 py-2 whitespace-nowrap">Operator IDs</th>
+                      <th className="px-4 py-2 whitespace-nowrap">Fee Asset</th>
                       <th className="px-4 py-2 whitespace-nowrap">Cluster Balance</th>
                       <th className="px-4 py-2 whitespace-nowrap">Runway</th>
                     </tr>
                   </thead>
                   <tbody>
                     {clusterArray.map((cluster, index) => (
-                      <tr key={index} className="text-white">
+                      <tr key={index} className={cluster.rowError ? 'text-red-300' : 'text-white'}>
                         <td
                           className="px-4 py-2"
                           style={{
@@ -213,11 +111,14 @@ const SSVClusterBalanceFetcher = () => {
                             textAlign: 'center',
                           }}
                         >
-                          {cluster[0]}
+                          {cluster.operatorIds}
                         </td>
-                        <td className="px-4 py-2 break-words">{cluster[1]} SSV</td>
                         <td className="px-4 py-2">
-                          {(cluster[2] / blocksPerDay).toFixed(0)} days ({cluster[2]} blocks)
+                          {cluster.feeAsset}
+                        </td>
+                        <td className="px-4 py-2 break-words">{cluster.balance} {cluster.currency}</td>
+                        <td className="px-4 py-2">
+                          {cluster.rowError ? cluster.rowError : cluster.rowNote ?? `${formatRunwayDays(cluster.runwayBlocks)} days (${cluster.runwayBlocks} blocks)`}
                         </td>
                       </tr>
                     ))}
