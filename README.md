@@ -33,7 +33,10 @@ The app queries the SSV subgraph for:
 It then computes cluster balance and runway locally.
 
 Important details:
-- ETH clusters use `effectiveBalance / 32` semantics for billing
+- ETH clusters bill on vUnits, the same as the contract (`ClusterLib.sol`):
+  - `vUnits = ceil(effectiveBalance * 10_000 / 32)`. If the cluster has no effective balance, `vUnits = validatorCount * 10_000`.
+  - `burnRate = (networkFee + operatorFees) * vUnits / 10_000`
+  - the balance calculation uses packed units (wei / 1e5). It floors the operator part and the network part separately, then multiplies by 1e5. A result below zero becomes zero.
 - legacy SSV clusters use `validatorCount`
 - calculations use `BigInt`
 - contract validation is done against `SSVNetworkViews` on mainnet

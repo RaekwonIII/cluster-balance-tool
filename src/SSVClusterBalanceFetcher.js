@@ -49,7 +49,7 @@ const SSVClusterBalanceFetcher = () => {
       <div className="flex justify-center items-center min-h-screen bg-[#0E0E52]">
         <div className="bg-[#0E0E52] shadow-md rounded-lg p-8 w-full max-w-md">
           <div className="flex justify-center mb-6">
-            <img src="https://ssv.network/wp-content/uploads/2024/09/Symbol.png" alt="SSV Network Logo" className="h-21 w-16" />
+            <img src="https://app.ssv.network/images/logo/light.svg" alt="SSV Network Logo" className="h-10 w-auto" />
           </div>
 
           <h2 className="text-3xl font-bold text-center mb-6 text-white">Cluster Balance Check</h2>
